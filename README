@@ -1,0 +1,33 @@
+-------------Overview--------------
+
+This project implements a synchronous vending machine controller using Verilog HDL.
+The design is based on a Finite State Machine (FSM) and supports multiple products, quantity selection, coin insertion, purchase confirmation, cancellation, and exact change return.
+
+The project is fully synthesizable, clock-driven, and verified using a structured testbench.
+
+-------------Features--------------
+
+ • Supports 3 products (A, B, C)
+ • User-defined quantity selection
+ • Accepts ₹5, ₹10, ₹20 coins
+ • Accumulates credit correctly (clocked design)
+ • Requires purchase confirmation
+ • Allows cancellation at any time
+ • Returns exact change
+ • FSM-based, clean RTL design
+ • Waveform generation using VCD
+
+------------------Finite State Machine (FSM)--------------
+
+The vending machine operates using the following states:
+
+State	                  Description
+• IDLE	         Waiting for product selection
+• INSERT	            Accepting coins
+• COMPARE	       Comparing credit with required amount
+• DISPENSE	     Waiting for confirmation and dispensing product
+
+The FSM ensures:
+•Controlled transitions
+•No combinational feedback
+•Predictable timing behavior
