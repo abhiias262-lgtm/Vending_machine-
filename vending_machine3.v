@@ -7,18 +7,17 @@
 // coin 10 = 10;
 // coin 20 = 11;
 
-
 //2
-// now the quantity will be entered by the user 
-// in this the exact amount of change will be displayed 
-// purchase confirmation is required.
-// product will be dispensed only when user confirms purchase by pressing dispense button
-// user can cancel purchase at every moment of time even after inserting full amount 
+    // now the quantity will be entered by the user 
+    // in this the exact amount of change will be displayed 
+    // purchase confirmation is required.
+    // product will be dispensed only when user confirms purchase by pressing dispense button
+    // user can cancel purchase at every moment of time even after inserting full amount 
 
 
 //3
-// this machine includes counter which will wait for instructions from user if it will not recieve any -
-// - then cancel purchase automatically .wait for 15 unit
+    // this machine includes counter which will wait for instructions from user if it will not recieve any -
+    // - then cancel purchase automatically .wait for 15 unit
 
 
 `timescale 1ns/1ns
@@ -31,8 +30,8 @@ module machine(
     input  [2:0]    quantity,    //Max 4
     input  [1:0]    coin,
     output reg      deliver,
-    output reg [7:0]   change
-);
+    output       timeout,
+    output reg [7:0]   change);
     
     // products
     parameter A=2'b01,B=2'b10,C=2'b11;
@@ -48,35 +47,49 @@ module machine(
     reg [1:0]   current_state;
     reg [1:0]   next_state;
     reg [3:0]   counter;
-    reg         timeout;
 
 
+// -------------------------------------------------------------
 // counter
-always @(posedge clk ) begin
-    if (rst) begin
-        counter <= 0;             // power-on reset
+//  -------------------------------------------------------------
+    always @(posedge clk or posedge rst) begin
+        if (rst || current_state == IDLE)
+            counter <= 0;
+        else if (current_state != IDLE)
+            counter <= counter + 1;
     end
-    else if (current_state == IDLE) begin
-        counter <= 0;             // idle → no timing
-    end
-    else if (coin != 2'b00) begin
-        counter <= 0;             // coin activity
-    end
-    else if (product != 2'b00) begin
-        counter <= 0;             // selection activity
-    end
-    else if (cancel) begin
-        counter <= 0;             // manual cancel
-    end
-    else begin
-        counter <= counter + 1;   // no activity → count time
+// Inactivity timeout counter (only counts when user is truly idle)
+    reg [4:0] inactivity_cnt;          // 5 bits → up to 31 cycles, enough for 15
+    reg [1:0]  prev_product;
+    reg [2:0]  prev_quantity;
+
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            prev_product   <= 0;
+            prev_quantity  <= 0;
+            inactivity_cnt <= 0;
+        end 
+        else begin
+            prev_product   <= product;
+            prev_quantity  <= quantity;
+
+        if (current_state == IDLE ||
+            coin != 2'b00 || cancel || confirm ||
+            (product != prev_product) || (quantity != prev_quantity)) begin
+            inactivity_cnt <= 0;
+        end
+        else if (current_state != IDLE) begin
+            if (inactivity_cnt < 31)
+                inactivity_cnt <= inactivity_cnt + 1;
+        end
+        end
     end
 
-
-    timeout <= (counter == 4'hf);
-end
-
-// here, state will be updated after every clock pulse 
+// Timeout signal (you can adjust threshold)
+    wire timeout = (inactivity_cnt >= 15);
+// ------------------------------------------------------------
+// state transitions  
+// ------------------------------------------------------------
     always @(posedge clk or posedge rst) begin
         if(rst)begin
             current_state<=IDLE;
@@ -85,95 +98,122 @@ end
             current_state<=next_state;
         end
     
-
+// -------------------------------------------------------------
 // amount calculation
+// -------------------------------------------------------------
     always @(*) begin
-        if (rst || cancel)begin
-            amount=8'd0;
-            price=8'd0;
-        end
-        else begin
         case (product) 
-        2'b01: price=8'd10;            //how to take quantity as pulse input ??  how to rst??
-        2'b10: price=8'd15;
-        2'b11: price=8'd20;
-        default:price=price;
+            2'b01: price=8'd10;            //how to take quantity as pulse input ??  how to rst??
+            2'b10: price=8'd15;
+            2'b11: price=8'd20;
+            default:price=price;
         endcase 
-        amount=quantity*price;
+        if (quantity >= 1 && quantity <= 4 && price != 0)
+            amount = price * quantity;
+        else
+            amount = 8'd0;
         end
  
-       
-    end
 
-//   state transition 
+// -------------------------------------------------------------
+//   state movement and output logic 
+// -------------------------------------------------------------
     always @(*) begin
         next_state=current_state;           //it is default case if nothing is inserted then remain in same state.
         deliver=0;
         case (current_state)  
             IDLE:begin
-                if (product != 2'b00)
+                if (product != 2'b00 && amount > 0)
                     next_state=INSERT;
                 end
             INSERT:begin
-                if(cancel)      next_state=IDLE;
+                if(cancel || timeout) begin   
+                    change_load = 1;
+                    change_value = credit;
+                    next_state=IDLE;
+                end
                 else if(coin != 2'b00) begin
                     next_state=COMPARE;
                 end
-                else if(timeout==1) begin
-                    next_state=IDLE;
+                else if (confirm) begin
+                    next_state=DISPENSE;
                 end
             end
             COMPARE:begin
-                if(cancel)      next_state=IDLE;
-                else if(credit<amount)begin
-                    next_state=INSERT;
+                if(cancel || timeout) begin
+                    next_state=IDLE;
+                    change_load = 1;
+                    change_value = credit;
+                end 
+                else if (confirm) begin
+                    next_state=IDLE;
+                    change_load = 1;
+                    change_value = credit;
                 end
-                else begin
+                else if (credit >= amount) begin
                     next_state=DISPENSE;
                 end
-
             end
             DISPENSE:begin
-                if(cancel)      next_state=IDLE; 
-                else if(confirm && credit>=amount) begin
-                    deliver=1;
+                if(cancel || timeout)     begin
                     next_state=IDLE;
+                    change_load = 1;
+                    change_value = credit;
+                end 
+                else if(confirm && credit>=amount) begin
+                    deliver     =1;
+                    next_state  =IDLE;
+                    change_load = 1;
+                    change_value= credit-amount;  // return change if any
+
                 end  
                 else if(confirm && credit<amount) begin
                     next_state=IDLE;
-                    deliver=0;
+                    change_load = 1;
+                    change_value = credit;
+
                 end 
-                else if(timeout==1)  next_state=IDLE;     
-                
+            
             end
+            default: next_state = IDLE;
         endcase
     end
 
-    // this block will count the amount inserted by user
-always @(posedge clk or posedge rst) begin
-    if (rst || cancel || current_state==IDLE)
-        credit <= 8'd0;
-    else begin
-        case (coin)
-            2'b01: credit <= credit + 8'd5;
-            2'b10: credit <= credit + 8'd10;
-            2'b11: credit <= credit + 8'd20;
-            default: credit <= credit;
-        endcase
-    end
-end
 
-
-    // it should be clocked ultimately output 
-always @(*) begin
-    if (rst || current_state==IDLE || cancel)
-        change = 8'd0;
-    else if (timeout) begin
-        change = credit;
+// --------------------------------------------------------------
+// this block will count the amount inserted by user
+// --------------------------------------------------------------
+    always @(posedge clk or posedge rst) begin
+        if (rst || current_state==IDLE || deliver)
+            credit <= 8'd0;
+        else begin
+            case (coin)
+                2'b01: credit <= credit + 8'd5;
+                2'b10: credit <= credit + 8'd10;
+                2'b11: credit <= credit + 8'd20;
+                default: credit <= credit; // hold previous value if no coin
+            endcase
+        end
     end
-    else if (deliver)
-        change = credit - amount;
-    
-end
+
+// ------------------------------------------------------------
+// change updation logic
+// ------------------------------------------------------------
+    reg change_load;
+    reg [7:0] change_value;
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            change <= 0;
+            change_load <= 0;
+        end
+        else if (change_load) begin
+            change <= change_value;
+            change_load <= 0;
+        end
+        else if (current_state == IDLE && inactivity_cnt == 0 && (product != 0 || quantity != 0)) begin   // new transaction starting
+            change <= 0;
+    end
+    // otherwise hold the previous value
+    end
 endmodule
 
